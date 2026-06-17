@@ -16,18 +16,36 @@ function ghHeaders(token: string): Record<string, string> {
   return h;
 }
 
+/**
+ * User-Agent for the WolPatcher UpdateInfo.xml fetch. We impersonate the
+ * launcher's UA (its UpdateInfoService uses "WarsOfLibertyLauncher/0.3") because
+ * some mod update servers (e.g. WoL's) 403 unknown agents — we observed a 403
+ * with our own UA. We're doing exactly what the launcher does, just centrally.
+ */
+const UPDATE_INFO_UA = "WarsOfLibertyLauncher/0.3";
+
 /** Resolves the latest available version string for a tracked mod, or "" on failure. */
 export async function resolveLatestVersion(mod: TrackedMod, token: string): Promise<string> {
   try {
     if (mod.updateMechanism === "WolPatcher") {
-      if (!mod.updateInfoUrl) return "";
-      const res = await fetch(mod.updateInfoUrl, { headers: { "User-Agent": "wol-launcher-notifier" } });
-      if (!res.ok) {
-        console.warn(`[github] ${mod.id}: UpdateInfo.xml HTTP ${res.status}`);
-        return "";
+      // Try the primary UpdateInfo.xml, then the alternate (mirror) on failure —
+      // same primary→alt fallback the launcher's UpdateInfoService does.
+      for (const url of [mod.updateInfoUrl, mod.updateInfoUrlAlt]) {
+        if (!url) continue;
+        try {
+          const res = await fetch(url, { headers: { "User-Agent": UPDATE_INFO_UA } });
+          if (!res.ok) {
+            console.warn(`[github] ${mod.id}: UpdateInfo.xml HTTP ${res.status} (${url})`);
+            continue;
+          }
+          const ver = firstVersionFromUpdateInfo(await res.text());
+          if (ver) return ver;
+          console.warn(`[github] ${mod.id}: no version parsed from ${url}`);
+        } catch (e) {
+          console.warn(`[github] ${mod.id}: UpdateInfo.xml fetch failed (${url}):`, (e as Error).message);
+        }
       }
-      const xml = await res.text();
-      return firstVersionFromUpdateInfo(xml);
+      return "";
     }
 
     if (mod.updateMechanism === "GitHubReleases") {

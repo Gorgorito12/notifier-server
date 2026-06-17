@@ -10,6 +10,15 @@ manifest the launchers read with a single cheap `ETag`/`304` request. The launch
 still does the version/translation **diff and dedup locally** — the feed only
 moves the data fetch off each client.
 
+**Mods are auto-discovered from the catalog — nobody hand-maintains this server.**
+The poller reads the launcher's mods catalog (`CATALOG_REPO`), parses each mod's
+`mod.json`, and derives its update source + translations repo automatically — the
+same fields the launcher uses. So a **modder just publishes their mod to the
+catalog** (via the launcher's "Publish my mod" wizard or a catalog PR) and their
+update / new-translation notifications reach everyone, with zero config here and
+nothing for them to understand about this service. `mods.config.json` exists only
+as an **optional override** for edge cases.
+
 > Intended to run on its **own free Oracle Cloud VM**, separate from the lobby
 > backend (`wol-launcher-lobby-node`). If this service is down, launchers
 > automatically fall back to polling GitHub directly — it is never a single point
@@ -42,18 +51,22 @@ moves the data fetch off each client.
 ## Configure
 
 ```bash
-cp .env.example .env                       # PORT, POLL_INTERVAL_MINUTES, GITHUB_TOKEN…
-cp mods.config.example.json mods.config.json  # the mods to track + their update sources
+cp .env.example .env       # set CATALOG_REPO (the rest have sane defaults)
 ```
 
-`mods.config.json` lists each tracked mod with its `updateMechanism`
-(`WolPatcher` → reads `UpdateInfo.xml`; `GitHubReleases` → reads repo releases)
-and the relevant URL/repo, plus an optional `translationsRepo`.
+Normally that's all — set `CATALOG_REPO` to your mods catalog and the poller
+discovers everything. `mods.config.json` is **optional** (copy from
+`mods.config.example.json`) and only for edge cases: tracking a mod that isn't in
+the catalog, or forcing a different URL than the catalog declares. Its entries
+merge **on top of** the catalog by `id`.
 
-> ⚠️ **Verify the version extraction once.** `WolPatcher` mods read the first
-> `<version ver="…">` out of `UpdateInfo.xml` with a regex (no XML-parser dep).
-> Confirm the attribute name against the real file and adjust
-> `firstVersionFromUpdateInfo` in `src/github.ts` if your schema differs.
+> ⚠️ **`WolPatcher` version extraction is best-effort.** It reads the first
+> `<version ver="…">` out of `UpdateInfo.xml` with a regex (no XML-parser dep),
+> trying the primary URL then the `updateInfoUrlAlt` mirror, with the launcher's
+> User-Agent (`WarsOfLibertyLauncher/0.3`) — some mod servers `403` unknown
+> agents (WoL's `aoe3wol.com` does; the SourceForge mirror works). Confirm the
+> attribute name against the real file and adjust `firstVersionFromUpdateInfo` in
+> `src/github.ts` if a mod's schema differs.
 
 ## Run
 

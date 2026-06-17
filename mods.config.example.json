@@ -1,16 +1,10 @@
 {
-  "$comment": "Tracked mods. The poller resolves each mod's latest version + translation keys and folds them into the manifest. Copy to mods.config.json and edit. 'updateMechanism' mirrors the launcher's ModUpdateMechanism: 'WolPatcher' (reads UpdateInfo.xml) or 'GitHubReleases' (reads the repo's releases).",
+  "$comment": "OPTIONAL overrides — you usually do NOT need this file. The poller auto-discovers every mod from the catalog (CATALOG_REPO) by reading each mod.json, so a modder just publishes to the catalog and notifications work with zero server config. Copy to mods.config.json ONLY for edge cases: (a) track a mod that isn't in the catalog, or (b) force a different value than the catalog declares. Entries merge ON TOP of the catalog by 'id'. Fields: 'updateMechanism' = 'WolPatcher' (reads 'updateInfoUrl' XML) | 'GitHubReleases' (reads 'githubRepo' releases); 'translationsRepo' = owner/repo of the translations releases.",
   "mods": [
     {
-      "id": "wol",
-      "updateMechanism": "WolPatcher",
-      "updateInfoUrl": "https://www.wars-of-liberty.com/update/UpdateInfo.xml",
-      "translationsRepo": "papillo12/translations"
-    },
-    {
-      "id": "improvement-mod",
+      "id": "some-mod-not-in-catalog",
       "updateMechanism": "GitHubReleases",
-      "githubRepo": "OWNER/improvement-mod-releases",
+      "githubRepo": "OWNER/some-mod-releases",
       "translationsRepo": ""
     }
   ]

@@ -49,9 +49,8 @@ app.get("/manifest", async (req, reply) => {
 });
 
 async function main(): Promise<void> {
-  if (config.mods.length === 0) {
-    console.warn("[startup] no mods configured — manifest will be empty. Check MODS_CONFIG.");
-  }
+  console.log(`[startup] catalog source: ${config.catalogRepo}` +
+    (config.manualOverrides.length ? ` (+${config.manualOverrides.length} manual override(s))` : ""));
   await poll(); // build once before accepting traffic
   setInterval(poll, config.pollIntervalMs);
 

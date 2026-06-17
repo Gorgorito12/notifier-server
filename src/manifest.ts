@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import type { AppConfig } from "./config.js";
+import type { AppConfig, TrackedMod } from "./config.js";
+import { discoverFromCatalog } from "./catalog.js";
 import { resolveLatestVersion, resolveTranslationKeys } from "./github.js";
 
 /** The manifest the launchers read. Matches the launcher's NotificationFeed model. */
@@ -23,11 +24,16 @@ export interface ManifestState {
  * cheap 304. Throttle is the caller's POLL_INTERVAL.
  */
 export async function buildManifest(config: AppConfig, nowIso: string): Promise<ManifestState> {
-  const mods: Manifest["mods"] = {};
+  // PRIMARY source: every mod discovered from the catalog. Manual overrides (if
+  // any) are merged ON TOP by id, so an entry in mods.config.json supplements a
+  // mod missing from the catalog or forces a different URL.
+  const catalogMods = await discoverFromCatalog(config.catalogRepo, config.githubToken);
+  const tracked = mergeById(catalogMods, config.manualOverrides);
 
-  // Sequential on purpose: a handful of mods, and serialising keeps us gentle on
-  // GitHub's rate limit from this single IP.
-  for (const mod of config.mods) {
+  const mods: Manifest["mods"] = {};
+  // Sequential on purpose: serialising keeps us gentle on GitHub's rate limit
+  // from this single IP.
+  for (const mod of tracked) {
     if (!mod.id) continue;
     const latestVersion = await resolveLatestVersion(mod, config.githubToken);
     const translations = await resolveTranslationKeys(mod.translationsRepo, config.githubToken);
@@ -36,6 +42,23 @@ export async function buildManifest(config: AppConfig, nowIso: string): Promise<
 
   const manifest: Manifest = { version: 1, generatedAt: nowIso, mods };
   return { manifest, etag: computeEtag(mods) };
+}
+
+/**
+ * Merges manual overrides on top of the catalog-discovered list, keyed by id
+ * (case-insensitive). An override replaces the catalog entry for that id; an
+ * override for an id not in the catalog is added. Field-level: the override
+ * object wins wholesale for its id (simplest, predictable).
+ */
+function mergeById(catalogMods: TrackedMod[], overrides: TrackedMod[]): TrackedMod[] {
+  const byId = new Map<string, TrackedMod>();
+  for (const m of catalogMods) if (m.id) byId.set(m.id.toLowerCase(), m);
+  for (const o of overrides) {
+    if (!o.id) continue;
+    const key = o.id.toLowerCase();
+    byId.set(key, { ...byId.get(key), ...o });
+  }
+  return [...byId.values()];
 }
 
 /** Stable content hash of the mods map (sorted keys) → the ETag. */

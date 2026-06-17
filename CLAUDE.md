@@ -18,6 +18,12 @@ historically fired an `UpdateService.CheckAsync()` + a translation-release listi
 burning GitHub's anonymous **60 req/h-per-IP** budget (a real concern behind shared
 NAT / Radmin VPN). This service centralizes that polling on a single IP.
 
+**Catalog-driven (zero per-mod config):** the tracked mods are **auto-discovered
+from the launcher's mods catalog** (`CATALOG_REPO`) by reading each `mod.json` — the
+same source the launcher uses. A modder just publishes to the catalog and their
+update/translation notifications flow to everyone; nobody hand-maintains this server.
+See `src/catalog.ts`. `mods.config.json` is an optional override only.
+
 **Where it runs:** its **own free Oracle Cloud VM**, deliberately separate from the
 lobby backend (`wol-launcher-lobby-node`, a 1 GB VM capped at ~60 concurrent users).
 Keeping it separate isolates the GitHub-polling load and lets it grow a GitHub token
@@ -64,8 +70,8 @@ Node **18+** (CI tests 18 and 20; developed on 24).
 Configure before running:
 
 ```bash
-cp .env.example .env                            # PORT, POLL_INTERVAL_MINUTES, GITHUB_TOKEN…
-cp mods.config.example.json mods.config.json    # the mods to track + their update sources
+cp .env.example .env       # set CATALOG_REPO; the rest have sane defaults
+# mods.config.json is OPTIONAL (overrides only) — usually skip it
 ```
 
 Smoke-test the HTTP contract locally:
@@ -82,20 +88,30 @@ curl -s http://localhost:8090/health                     # {"ok":true,"ready":�
 
 ```
 src/index.ts     entry point: in-memory manifest, poll timer, Fastify routes
-   └─ src/manifest.ts   buildManifest() polls every tracked mod → Manifest + ETag
-        └─ src/github.ts   resolveLatestVersion() / resolveTranslationKeys()
-   └─ src/config.ts   loadConfig(): env vars + mods.config.json
+   └─ src/manifest.ts   buildManifest(): discover from catalog + merge overrides → Manifest + ETag
+        ├─ src/catalog.ts   discoverFromCatalog() — PRIMARY source (reads each mod.json)
+        └─ src/github.ts    resolveLatestVersion() / resolveTranslationKeys()
+   └─ src/config.ts   loadConfig(): env vars + optional mods.config.json overrides
 ```
 
+- **`src/catalog.ts`** — `discoverFromCatalog(catalogRepo, token)` is the PRIMARY
+  source: it lists the catalog's `/mods`, reads each `mod.json`, and projects it to
+  a `TrackedMod` with the SAME mapping as the launcher's
+  `ModRegistry.ProjectToProfile` (WolPatcher → `update.wol.updateInfoUrl`/`…Alt`;
+  GitHubReleases → `sourceRepo`; `translations.repo`). A mod with no trackable
+  version source AND no translations repo is skipped. Best-effort: one bad
+  `mod.json` is logged + skipped; a failed listing returns `[]`.
 - **`src/config.ts`** — `loadConfig()` reads env (`PORT`, `HOST`,
-  `POLL_INTERVAL_MINUTES`, `GITHUB_TOKEN`, `MODS_CONFIG`) and the tracked-mods
-  JSON. `TrackedMod` mirrors the launcher's `ModProfile` fields this service needs
-  (`id`, `updateMechanism`, `updateInfoUrl` | `githubRepo`, `translationsRepo`).
+  `POLL_INTERVAL_MINUTES`, `GITHUB_TOKEN`, `CATALOG_REPO`, `MODS_CONFIG`).
+  `manualOverrides` (from `mods.config.json`) is **optional** — absent is the
+  normal case. `TrackedMod` mirrors the launcher's `ModProfile` fields this service
+  needs.
 - **`src/github.ts`** — all GitHub / update-source I/O. Every function is
   **best-effort: it logs and returns a safe empty value on failure** so one bad
   source never blanks the whole manifest.
-- **`src/manifest.ts`** — `buildManifest()` walks the tracked mods sequentially
-  (gentle on the rate limit) and computes the ETag. `computeEtag()` is exported
+- **`src/manifest.ts`** — `buildManifest()` discovers from the catalog, merges the
+  optional overrides on top by id (`mergeById`), walks the result sequentially
+  (gentle on the rate limit), and computes the ETag. `computeEtag()` is exported
   for testing.
 - **`src/index.ts`** — holds the current manifest in memory, rebuilds on
   `setInterval`, serves `/manifest` (+ `/health`). Stateless beyond that
@@ -119,19 +135,24 @@ src/index.ts     entry point: in-memory manifest, poll timer, Fastify routes
   `id@version`), the client baseline and the feed would mismatch → false "new
   translation" bells or none at all. Keep the key = release tag.
 
-- **The `WolPatcher` version regex is best-effort and UNVERIFIED against a real
-  file.** `firstVersionFromUpdateInfo()` pulls the first `<version ver="…">` (or
-  `version="…"`) out of `UpdateInfo.xml` with a regex, so the service needs no
-  XML-parser dependency. The launcher treats `Versions[0]` as the latest and the
-  file lists newest-first. **Confirm the attribute name against the actual WoL
-  `UpdateInfo.xml` and adjust the regex if the schema differs** — a wrong match
-  yields `""` (no update ever offered for that mod), which is silent.
+- **The `WolPatcher` version fetch impersonates the launcher's User-Agent and
+  falls back to the mirror.** `resolveLatestVersion()` tries `updateInfoUrl` then
+  `updateInfoUrlAlt`, sending User-Agent `WarsOfLibertyLauncher/0.3` (the launcher's
+  UA) — observed: WoL's `aoe3wol.com` returns **403** to an unknown UA, but the
+  SourceForge mirror works, so the alt fallback is load-bearing for WoL. The version
+  itself comes from `firstVersionFromUpdateInfo()`, a best-effort regex pulling the
+  first `<version ver="…">`/`version="…"` (the file lists newest-first; no XML-parser
+  dep). A wrong attribute name or all-URLs-failing yields `""` (no update offered),
+  which is silent — **confirm against the real file if a mod's schema differs.**
 
-- **`mods.config.json` is gitignored on purpose; commit the `.example`.** It holds
-  deploy-specific URLs. The committed `mods.config.example.json` is the template.
-  With no `mods.config.json` present the service starts, **warns**, and serves an
-  empty `mods: {}` manifest (valid — clients just see no mods). So an empty
-  manifest in production usually means a missing/misread config, not a code bug.
+- **`mods.config.json` is an OPTIONAL override, NOT the source of truth.** The
+  PRIMARY source is the catalog (`CATALOG_REPO`) via `discoverFromCatalog`; the file
+  only supplements/overrides by id for edge cases (a mod not in the catalog, or
+  forcing a URL). It's gitignored; the committed `mods.config.example.json` is the
+  template. **With no `mods.config.json` the service runs normally** (catalog-only) —
+  so an empty `mods: {}` manifest means the CATALOG fetch failed or has no trackable
+  mods, not a missing override file. (`discoverFromCatalog` logs
+  `discovered N trackable mod(s)`.)
 
 - **CI runs `npm ci`, which REQUIRES `package-lock.json` to be committed.**
   `.github/workflows/ci.yml` does `npm ci` → `npm run typecheck` → `npm run build`
