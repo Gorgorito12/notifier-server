@@ -1,0 +1,17 @@
+{
+  "$comment": "Tracked mods. The poller resolves each mod's latest version + translation keys and folds them into the manifest. Copy to mods.config.json and edit. 'updateMechanism' mirrors the launcher's ModUpdateMechanism: 'WolPatcher' (reads UpdateInfo.xml) or 'GitHubReleases' (reads the repo's releases).",
+  "mods": [
+    {
+      "id": "wol",
+      "updateMechanism": "WolPatcher",
+      "updateInfoUrl": "https://www.wars-of-liberty.com/update/UpdateInfo.xml",
+      "translationsRepo": "papillo12/translations"
+    },
+    {
+      "id": "improvement-mod",
+      "updateMechanism": "GitHubReleases",
+      "githubRepo": "OWNER/improvement-mod-releases",
+      "translationsRepo": ""
+    }
+  ]
+}

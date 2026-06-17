@@ -1,0 +1,25 @@
+{
+  "name": "wol-launcher-notifier",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Central notification feed for the AoE3 Mod Launcher: polls GitHub once for everyone and serves a tiny JSON manifest (latest versions + translation keys) the launchers read with one cheap ETag/304 request.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "node --import tsx --watch src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "fastify": "^4.28.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.4",
+    "@types/node": "^20.14.0"
+  }
+}
