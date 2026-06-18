@@ -83,15 +83,21 @@ curl -i http://localhost:8090/manifest                 # 200 + ETag
 curl -i -H 'If-None-Match: "<etag>"' .../manifest       # 304
 ```
 
-## Deploy (Oracle Cloud VM, sketch)
+## Deploy
 
-1. Open the port (or front with nginx/caddy + your DuckDNS hostname, e.g.
-   `wol-notify.duckdns.org`), TLS via Let's Encrypt.
-2. Install Node 18+, `npm ci && npm run build`.
-3. Run under a process manager (systemd / pm2) so it restarts on reboot.
-4. Point the launcher at it: set `notificationFeedUrl` in `launcher-config.json`
-   to `https://<your-host>/manifest` (or change the built-in default
-   `ResolveNotificationFeedUrl()` in `MainWindow.xaml.cs`).
+> ✅ **Deployed & live at `https://wol-notify.duckdns.org/manifest`** (own Oracle
+> Cloud VM, nginx + Let's Encrypt, systemd). The launcher already defaults to that
+> URL, so no client change is needed.
+
+Runs on a free Oracle Cloud VM fronted by nginx + Let's Encrypt at a DuckDNS
+hostname, under systemd. The full, tested step-by-step (VM prep, build, `.env`,
+systemd, DuckDNS, **Oracle's two firewall layers**, nginx, certbot, verification,
+and the gotchas that bite) is in **[DEPLOY.md](DEPLOY.md)**.
+
+To point the launcher elsewhere (a fork/mirror/test server), set
+`notificationFeedUrl` in `launcher-config.json` to `https://<your-host>/manifest`,
+or change the built-in default `ResolveNotificationFeedUrl()` in the launcher's
+`MainWindow.xaml.cs`.
 
 ## Notes
 

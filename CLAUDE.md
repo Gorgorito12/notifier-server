@@ -24,10 +24,20 @@ same source the launcher uses. A modder just publishes to the catalog and their
 update/translation notifications flow to everyone; nobody hand-maintains this server.
 See `src/catalog.ts`. `mods.config.json` is an optional override only.
 
-**Where it runs:** its **own free Oracle Cloud VM**, deliberately separate from the
-lobby backend (`wol-launcher-lobby-node`, a 1 GB VM capped at ~60 concurrent users).
-Keeping it separate isolates the GitHub-polling load and lets it grow a GitHub token
-(5000 req/h) without touching lobbies.
+**Where it runs:** **DEPLOYED & LIVE** (since 2026-06-18) at
+**`https://wol-notify.duckdns.org/manifest`** on its **own free Oracle Cloud VM**
+(hostname `notifier-server`, public IP `129.213.160.55`, Ubuntu 24.04, 1 GB RAM +
+2 GB swap, Node 20) — deliberately separate from the lobby backend
+(`wol-launcher-lobby-node`, a 1 GB VM capped at ~60 concurrent users). Keeping it
+separate isolates the GitHub-polling load and lets it grow a GitHub token
+(5000 req/h) without touching lobbies. The process is a **systemd unit `notifier`**
+(`EnvironmentFile=.env` because the app reads `process.env` directly — it does NOT
+auto-load `.env`), behind **nginx** (reverse proxy → `127.0.0.1:8090`) + **certbot**
+(Let's Encrypt, auto-renew). **The full tested runbook is `DEPLOY.md`.** Deployment
+gotcha worth remembering: Oracle has **two** firewall layers (the VCN Security List
+in the console AND the local iptables, whose `REJECT ... icmp-host-prohibited` must
+be jumped — the 80/443 ACCEPTs go BEFORE it); and DuckDNS must be updated FROM the
+VM (empty `ip=`) or the domain points at the updater's PC. See `DEPLOY.md`.
 
 ## The launcher relationship (read first)
 
