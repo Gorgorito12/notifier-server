@@ -142,8 +142,12 @@ src/index.ts     entry point: in-memory manifest, poll timer, Fastify routes
     the **`tag_name`** of each release shipping BOTH `translation.json` AND a `.zip`
     (mirrors `TranslationRegistryService.FetchFromReleasesAsync`).
   - **Folder-published** (new): `resolveTranslationFolderKeys(translationsFolderRepo)`
-    lists `translations/` on main via the Contents API, reads each
-    `translations/<id>/translation.json` via raw CDN, and emits **`id@contentHash`**.
+    reads the whole repo tree in ONE call (the **Git Trees API**, recursive),
+    matches `translations/<lang>(/<version>)?/translation.json`, groups by `<lang>`,
+    reads each manifest via raw CDN, and emits the **NEWEST version's**
+    **`id@contentHash`** (newest = `date` desc then version desc — same as the
+    launcher's `OrderVersions`, so one bell per new version). The
+    `translations/<id>/<version>/` subfolders are the launcher's version history.
     `contentHash` is the manifest's field, or recomputed from `files[]` when absent
     via `computeContentHash()` — a function that **MUST stay byte-identical to the
     launcher's `TranslationCompat.ComputeContentHash`** (sort files by path, join

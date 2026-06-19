@@ -149,37 +149,67 @@ export async function resolveTranslationFolderKeys(
 ): Promise<string[]> {
   if (!repo) return [];
   try {
-    const url = `https://api.github.com/repos/${repo}/contents/translations`;
+    // One call gets the whole tree; handles both translations/<id>/translation.json
+    // (single version) and translations/<id>/<version>/translation.json (history).
+    const url = `https://api.github.com/repos/${repo}/git/trees/main?recursive=1`;
     const res = await fetch(url, { headers: ghHeaders(token) });
-    if (res.status === 404) return []; // no translations/ folder → empty, not an error
+    if (res.status === 404) return []; // no tree → empty, not an error
     if (!res.ok) {
-      console.warn(`[github] translations folder ${repo}: HTTP ${res.status}`);
+      console.warn(`[github] translations tree ${repo}: HTTP ${res.status}`);
       return [];
     }
-    const items = (await res.json()) as Array<{ name?: string; type?: string }>;
+    const data = (await res.json()) as { tree?: Array<{ path?: string; type?: string }> };
+    const re = /^translations\/([^/]+)(?:\/([^/]+))?\/translation\.json$/;
+
+    // Group manifest paths by language id.
+    const byLang = new Map<string, string[]>();
+    for (const node of data.tree ?? []) {
+      if (node.type !== "blob") continue;
+      const m = re.exec(node.path ?? "");
+      if (!m) continue;
+      const arr = byLang.get(m[1]) ?? [];
+      arr.push(node.path!);
+      byLang.set(m[1], arr);
+    }
+
     const keys: string[] = [];
-    for (const it of Array.isArray(items) ? items : []) {
-      if (it.type !== "dir" || !it.name) continue;
-      try {
-        const raw = `https://raw.githubusercontent.com/${repo}/main/translations/${it.name}/translation.json`;
-        const mRes = await fetch(raw);
-        if (!mRes.ok) continue;
-        const m = (await mRes.json()) as {
-          id?: string;
-          contentHash?: string;
-          files?: Array<{ path?: string; translatedHash?: string }>;
-        };
-        if (!m.id) continue;
-        const hash =
-          m.contentHash && m.contentHash.trim() ? m.contentHash.trim() : computeContentHash(m.files);
-        keys.push(`${m.id}@${hash}`);
-      } catch (err) {
-        console.warn(`[github] translations folder ${repo}/${it.name}: failed:`, (err as Error).message);
+    for (const [, paths] of byLang) {
+      // Read each version's manifest; emit only the NEWEST version's key (same
+      // newest as the launcher: date desc, then version desc).
+      const candidates: { id: string; hash: string; date: string; version: string }[] = [];
+      for (const path of paths) {
+        try {
+          const raw = `https://raw.githubusercontent.com/${repo}/main/${path}`;
+          const mRes = await fetch(raw);
+          if (!mRes.ok) continue;
+          const m = (await mRes.json()) as {
+            id?: string;
+            contentHash?: string;
+            date?: string;
+            version?: string;
+            files?: Array<{ path?: string; translatedHash?: string }>;
+          };
+          if (!m.id) continue;
+          const hash =
+            m.contentHash && m.contentHash.trim() ? m.contentHash.trim() : computeContentHash(m.files);
+          candidates.push({ id: m.id, hash, date: m.date ?? "", version: m.version ?? "" });
+        } catch (err) {
+          console.warn(`[github] translations ${repo}/${path}: failed:`, (err as Error).message);
+        }
       }
+      if (candidates.length === 0) continue;
+      candidates.sort((a, b) => {
+        if (a.date !== b.date) return a.date < b.date ? 1 : -1; // date desc
+        const av = a.version.toLowerCase();
+        const bv = b.version.toLowerCase();
+        return av === bv ? 0 : av < bv ? 1 : -1; // version desc
+      });
+      const newest = candidates[0];
+      keys.push(`${newest.id}@${newest.hash}`);
     }
     return keys;
   } catch (err) {
-    console.warn(`[github] translations folder ${repo}: failed:`, (err as Error).message);
+    console.warn(`[github] translations tree ${repo}: failed:`, (err as Error).message);
     return [];
   }
 }
