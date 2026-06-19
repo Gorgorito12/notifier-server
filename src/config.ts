@@ -16,8 +16,13 @@ export interface TrackedMod {
   updateInfoUrlAlt?: string;
   /** GitHubReleases: "owner/repo" whose latest release tag is the version. */
   githubRepo?: string;
-  /** Optional "owner/repo" of the community translations repo for this mod. */
+  /** Optional "owner/repo" whose RELEASES host translation packs (legacy path). */
   translationsRepo?: string;
+  /**
+   * Optional "owner/repo" hosting translations as FILES under translations/<id>/
+   * on main (the new path). Read alongside translationsRepo (dual mode).
+   */
+  translationsFolderRepo?: string;
 }
 
 export interface AppConfig {

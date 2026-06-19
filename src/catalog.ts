@@ -22,7 +22,7 @@ interface CatalogModJson {
     mechanism?: string;
     wol?: { updateInfoUrl?: string; updateInfoUrlAlt?: string };
   };
-  translations?: { repo?: string };
+  translations?: { repo?: string; folderRepo?: string };
 }
 
 interface GitHubContentEntry {
@@ -93,6 +93,7 @@ function projectToTracked(m: CatalogModJson, folder: string): TrackedMod | null 
   const id = m.id || folder;
   const mechanism = m.update?.mechanism ?? "";
   const translationsRepo = m.translations?.repo || undefined;
+  const translationsFolderRepo = m.translations?.folderRepo || undefined;
 
   let updateInfoUrl: string | undefined;
   let updateInfoUrlAlt: string | undefined;
@@ -109,7 +110,15 @@ function projectToTracked(m: CatalogModJson, folder: string): TrackedMod | null 
   const hasVersionSource =
     (mechanism === "WolPatcher" && (!!updateInfoUrl || !!updateInfoUrlAlt)) ||
     (mechanism === "GitHubReleases" && !!githubRepo);
-  if (!hasVersionSource && !translationsRepo) return null;
+  if (!hasVersionSource && !translationsRepo && !translationsFolderRepo) return null;
 
-  return { id, updateMechanism: mechanism, updateInfoUrl, updateInfoUrlAlt, githubRepo, translationsRepo };
+  return {
+    id,
+    updateMechanism: mechanism,
+    updateInfoUrl,
+    updateInfoUrlAlt,
+    githubRepo,
+    translationsRepo,
+    translationsFolderRepo,
+  };
 }

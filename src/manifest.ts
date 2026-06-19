@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AppConfig, TrackedMod } from "./config.js";
 import { discoverFromCatalog } from "./catalog.js";
-import { resolveLatestVersion, resolveTranslationKeys } from "./github.js";
+import { resolveLatestVersion, resolveAllTranslationKeys } from "./github.js";
 
 /** The manifest the launchers read. Matches the launcher's NotificationFeed model. */
 export interface Manifest {
@@ -36,7 +36,8 @@ export async function buildManifest(config: AppConfig, nowIso: string): Promise<
   for (const mod of tracked) {
     if (!mod.id) continue;
     const latestVersion = await resolveLatestVersion(mod, config.githubToken);
-    const translations = await resolveTranslationKeys(mod.translationsRepo, config.githubToken);
+    // Dual mode: folder-published (translations/<id>/ on main) + legacy releases.
+    const translations = await resolveAllTranslationKeys(mod, config.githubToken);
     mods[mod.id] = { latestVersion, translations };
   }
 

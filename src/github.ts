@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { TrackedMod } from "./config.js";
 
 /**
@@ -112,4 +113,86 @@ export async function resolveTranslationKeys(repo: string | undefined, token: st
     console.warn(`[github] translations ${repo}: failed:`, (err as Error).message);
     return [];
   }
+}
+
+/**
+ * Content fingerprint of a folder-published pack. MUST stay byte-identical to the
+ * launcher's TranslationCompat.ComputeContentHash so the dedup keys match: sort
+ * files by path, join "path\ntranslatedHash" with "\n", sha256 the UTF-8 bytes,
+ * take the first 16 lowercase-hex chars.
+ */
+function computeContentHash(
+  files: Array<{ path?: string; translatedHash?: string }> | undefined,
+): string {
+  const ordered = (files ?? [])
+    .filter((f) => f)
+    .slice()
+    .sort((a, b) => {
+      const pa = a.path ?? "";
+      const pb = b.path ?? "";
+      return pa < pb ? -1 : pa > pb ? 1 : 0;
+    });
+  const payload = ordered.map((f) => `${f.path ?? ""}\n${f.translatedHash ?? ""}`).join("\n");
+  return createHash("sha256").update(payload, "utf8").digest("hex").slice(0, 16);
+}
+
+/**
+ * Folder-published translations: each pack lives in translations/<id>/ on main
+ * with a translation.json (+ .zip). Lists the folder via the Contents API and
+ * reads each manifest via the raw CDN; the key is `id@contentHash` (read from the
+ * manifest, recomputed from files when absent — same recipe as the launcher).
+ * Returns [] on failure or when the repo has no translations/ folder.
+ */
+export async function resolveTranslationFolderKeys(
+  repo: string | undefined,
+  token: string,
+): Promise<string[]> {
+  if (!repo) return [];
+  try {
+    const url = `https://api.github.com/repos/${repo}/contents/translations`;
+    const res = await fetch(url, { headers: ghHeaders(token) });
+    if (res.status === 404) return []; // no translations/ folder → empty, not an error
+    if (!res.ok) {
+      console.warn(`[github] translations folder ${repo}: HTTP ${res.status}`);
+      return [];
+    }
+    const items = (await res.json()) as Array<{ name?: string; type?: string }>;
+    const keys: string[] = [];
+    for (const it of Array.isArray(items) ? items : []) {
+      if (it.type !== "dir" || !it.name) continue;
+      try {
+        const raw = `https://raw.githubusercontent.com/${repo}/main/translations/${it.name}/translation.json`;
+        const mRes = await fetch(raw);
+        if (!mRes.ok) continue;
+        const m = (await mRes.json()) as {
+          id?: string;
+          contentHash?: string;
+          files?: Array<{ path?: string; translatedHash?: string }>;
+        };
+        if (!m.id) continue;
+        const hash =
+          m.contentHash && m.contentHash.trim() ? m.contentHash.trim() : computeContentHash(m.files);
+        keys.push(`${m.id}@${hash}`);
+      } catch (err) {
+        console.warn(`[github] translations folder ${repo}/${it.name}: failed:`, (err as Error).message);
+      }
+    }
+    return keys;
+  } catch (err) {
+    console.warn(`[github] translations folder ${repo}: failed:`, (err as Error).message);
+    return [];
+  }
+}
+
+/**
+ * DUAL MODE: combined translation keys for a mod — folder-published packs (on
+ * main) plus legacy release-published packs — deduped. This is what the manifest
+ * builder calls.
+ */
+export async function resolveAllTranslationKeys(mod: TrackedMod, token: string): Promise<string[]> {
+  const [folder, releases] = await Promise.all([
+    resolveTranslationFolderKeys(mod.translationsFolderRepo, token),
+    resolveTranslationKeys(mod.translationsRepo, token),
+  ]);
+  return Array.from(new Set([...folder, ...releases]));
 }

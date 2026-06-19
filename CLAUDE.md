@@ -135,15 +135,23 @@ src/index.ts     entry point: in-memory manifest, poll timer, Fastify routes
   and **no client would ever get a 304** — defeating the entire point. If you add
   a top-level field that changes every poll, keep it out of the hash too.
 
-- **Translation keys MUST match the launcher's `KeyOf` exactly.** The launcher
-  dedups translations on a key it computes as the GitHub **release tag** (falling
-  back to `id@version`) — see `NotifyNewTranslations` in the launcher's
-  `MainWindow.xaml.cs`. `resolveTranslationKeys()` therefore emits the
-  **`tag_name`** of each release that ships BOTH `translation.json` AND a `.zip`
-  (mirroring the launcher's `TranslationRegistryService.FetchFromReleasesAsync`
-  filter). If this service emitted a different key format (e.g. always
-  `id@version`), the client baseline and the feed would mismatch → false "new
-  translation" bells or none at all. Keep the key = release tag.
+- **Translation keys MUST match the launcher's `TranslationCompat.KeyOf` exactly.**
+  Translations are now published TWO ways (DUAL MODE), so the key has two forms and
+  `resolveAllTranslationKeys(mod, token)` emits both, deduped:
+  - **Release-published** (legacy): `resolveTranslationKeys(translationsRepo)` emits
+    the **`tag_name`** of each release shipping BOTH `translation.json` AND a `.zip`
+    (mirrors `TranslationRegistryService.FetchFromReleasesAsync`).
+  - **Folder-published** (new): `resolveTranslationFolderKeys(translationsFolderRepo)`
+    lists `translations/` on main via the Contents API, reads each
+    `translations/<id>/translation.json` via raw CDN, and emits **`id@contentHash`**.
+    `contentHash` is the manifest's field, or recomputed from `files[]` when absent
+    via `computeContentHash()` — a function that **MUST stay byte-identical to the
+    launcher's `TranslationCompat.ComputeContentHash`** (sort files by path, join
+    `path\ntranslatedHash` with `\n`, SHA-256 the UTF-8 bytes, first 16 hex chars).
+    A pinned cross-impl test on the launcher side (`TranslationCompatTests`) guards
+    this; if you change the recipe in one place, change BOTH or every folder pack
+    re-bells (or none does). The `folderRepo` comes from each mod.json's
+    `translations.folderRepo` (catalog), read in `catalog.ts`.
 
 - **The `WolPatcher` version fetch impersonates the launcher's User-Agent and
   falls back to the mirror.** `resolveLatestVersion()` tries `updateInfoUrl` then
