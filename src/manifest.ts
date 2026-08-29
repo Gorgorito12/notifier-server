@@ -1,13 +1,19 @@
 import { createHash } from "node:crypto";
 import type { AppConfig, TrackedMod } from "./config.js";
 import { discoverFromCatalog } from "./catalog.js";
-import { resolveLatestVersion, resolveAllTranslationKeys } from "./github.js";
+import { resolveLatestVersion, resolveAllTranslationKeys, resolveAnnouncements,
+         type Announcement } from "./github.js";
 
 /** The manifest the launchers read. Matches the launcher's NotificationFeed model. */
 export interface Manifest {
   version: number;
   generatedAt: string;
   mods: Record<string, { latestVersion: string; translations: string[] }>;
+  /**
+   * The launcher's own announcements. Absent-as-empty for an older launcher,
+   * which ignores unknown JSON fields and simply never sees them.
+   */
+  announcements: Announcement[];
 }
 
 /** A manifest plus the ETag launchers use for If-None-Match / 304. */
@@ -41,8 +47,11 @@ export async function buildManifest(config: AppConfig, nowIso: string): Promise<
     mods[mod.id] = { latestVersion, translations };
   }
 
-  const manifest: Manifest = { version: 1, generatedAt: nowIso, mods };
-  return { manifest, etag: computeEtag(mods) };
+  const announcements = await resolveAnnouncements(
+    config.announcementsRepo, config.announcementsPath, config.githubToken);
+
+  const manifest: Manifest = { version: 1, generatedAt: nowIso, mods, announcements };
+  return { manifest, etag: computeEtag(mods, announcements) };
 }
 
 /**
@@ -62,14 +71,24 @@ function mergeById(catalogMods: TrackedMod[], overrides: TrackedMod[]): TrackedM
   return [...byId.values()];
 }
 
-/** Stable content hash of the mods map (sorted keys) → the ETag. */
-export function computeEtag(mods: Manifest["mods"]): string {
+/**
+ * Stable content hash of everything a launcher would act on → the ETag.
+ *
+ * <p><b>The announcements MUST be in here.</b> They were not, at first, and the bug that
+ * would have caused is total and silent: the ETag would not change when one was published,
+ * every launcher would get a 304, and nobody would ever see a single announcement. The rule
+ * is simply that anything a client reacts to belongs in the hash — `generatedAt` stays out
+ * for the mirror-image reason, so an unchanged poll still yields a cheap 304.</p>
+ */
+export function computeEtag(mods: Manifest["mods"], announcements: Announcement[] = []): string {
   const sorted = Object.keys(mods)
     .sort()
     .reduce<Manifest["mods"]>((acc, k) => {
       acc[k] = { latestVersion: mods[k].latestVersion, translations: [...mods[k].translations].sort() };
       return acc;
     }, {});
-  const hash = createHash("sha256").update(JSON.stringify(sorted)).digest("hex");
+  const hash = createHash("sha256")
+    .update(JSON.stringify({ mods: sorted, announcements }))
+    .digest("hex");
   return `"${hash}"`;
 }

@@ -43,6 +43,22 @@ export interface AppConfig {
    * absent (the normal case — the catalog is enough).
    */
   manualOverrides: TrackedMod[];
+  /**
+   * "owner/repo" holding the launcher's announcements file, and the path to it.
+   * The LAUNCHER's repo rather than the mods catalog, because these are the
+   * launcher's announcements — support notices, release news — not any mod's.
+   *
+   * Publishing one is a COMMIT: no deploy, no SSH, editable from the GitHub web
+   * UI. That is the whole reason it lives in a repo rather than in a file next
+   * to this service.
+   */
+  announcementsRepo: string;
+  announcementsPath: string;
+}
+
+function envStr(name: string, fallback: string): string {
+  const v = process.env[name];
+  return v && v.trim().length > 0 ? v.trim() : fallback;
 }
 
 function envInt(name: string, fallback: number): number {
@@ -72,6 +88,8 @@ export function loadConfig(): AppConfig {
     pollIntervalMs: envInt("POLL_INTERVAL_MINUTES", 10) * 60_000,
     githubToken: process.env.GITHUB_TOKEN ?? "",
     catalogRepo: process.env.CATALOG_REPO ?? "Gorgorito12/aoe3-mods-catalog",
+    announcementsRepo: envStr("ANNOUNCEMENTS_REPO", "Gorgorito12/AoE3-Mod-Launcher"),
+    announcementsPath: envStr("ANNOUNCEMENTS_PATH", "announcements.json"),
     manualOverrides,
   };
 }

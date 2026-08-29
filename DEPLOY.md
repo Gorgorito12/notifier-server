@@ -244,3 +244,53 @@ that the notification sweep uses the feed (no "feed fetch failed").
 | Add a GitHub token later | edit `GITHUB_TOKEN=` in `.env`, then restart |
 
 Apache-2.0.
+
+---
+
+## Announcements
+
+The manifest carries the launcher's own announcements alongside the per-mod data, so news
+reaches players in the notification bell instead of waiting for them to remember to go and read
+a Discord.
+
+**Publishing one is a commit**, to `announcements.json` in the launcher repo
+(`Gorgorito12/AoE3-Mod-Launcher`). No deploy, no SSH, editable from the GitHub web UI. The next
+poll picks it up.
+
+```json
+{
+  "announcements": [
+    {
+      "id": "2026-09-competitive",
+      "title": "Competitive rooms are live",
+      "body": "Only competitive rooms count towards the ladder now.",
+      "url": "https://discord.gg/WVarbzzzmc",
+      "date": "2026-09-01"
+    }
+  ]
+}
+```
+
+- **`id` is permanent.** It is the launcher's dedup key. Changing one re-announces the item to
+  everybody; reusing one silently suppresses the new announcement for everyone who saw the old.
+- `url` is optional — omit it and the launcher opens the project's Discord.
+- Entries without an `id` or a `title` are dropped here rather than published.
+- A missing or unreachable file is normal (404 → no announcements) and never blanks the rest of
+  the manifest, the same best-effort rule every other source in `github.ts` follows.
+
+Override the location with `ANNOUNCEMENTS_REPO` / `ANNOUNCEMENTS_PATH`.
+
+### The ETag rule, which is the one way to break this silently
+
+Launchers read this service with `If-None-Match`, so **the ETag is the only thing that decides
+whether anybody ever sees a change.** `computeEtag` therefore hashes the mods map *and* the
+announcements. Leave the announcements out and the failure is total and invisible: the service
+looks healthy, the manifest is correct, every launcher gets a cheap `304`, and no announcement
+ever arrives.
+
+`generatedAt` stays OUT of the hash for the mirror-image reason — an unchanged poll must keep
+the same ETag so the 304 stays cheap.
+
+```bash
+npm test        # pins exactly that: publishing or editing an announcement moves the ETag
+```

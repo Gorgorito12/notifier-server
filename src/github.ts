@@ -226,3 +226,60 @@ export async function resolveAllTranslationKeys(mod: TrackedMod, token: string):
   ]);
   return Array.from(new Set([...folder, ...releases]));
 }
+
+/** One published announcement, as the launcher's bell will show it. */
+export interface Announcement {
+  id: string;
+  title: string;
+  body: string;
+  /** Where "read more" goes. Empty/absent → the launcher falls back to its own Discord. */
+  url?: string;
+  /** ISO date, informational — ordering is the file's own order. */
+  date?: string;
+}
+
+/**
+ * Reads the launcher's announcements file from a repo, via the raw CDN (no API
+ * quota). Best-effort like everything else here: any failure yields an empty
+ * list so one unreachable file never blanks the rest of the manifest.
+ *
+ * <p>Entries missing an id or a title are DROPPED rather than passed through.
+ * The id is the launcher's dedup key — an announcement without one would bell
+ * every single poll, forever, for everybody.</p>
+ */
+export async function resolveAnnouncements(
+  repo: string,
+  path: string,
+  token: string,
+): Promise<Announcement[]> {
+  if (!repo || !path) return [];
+  const url = `https://raw.githubusercontent.com/${repo}/main/${path}`;
+  try {
+    const res = await fetch(url, { headers: ghHeaders(token) });
+    if (res.status === 404) return [];   // no announcements published yet: normal, not an error
+    if (!res.ok) {
+      console.warn(`[github] announcements HTTP ${res.status} (${url})`);
+      return [];
+    }
+    const parsed = (await res.json()) as { announcements?: unknown };
+    const list = Array.isArray(parsed?.announcements) ? parsed.announcements : [];
+    const out: Announcement[] = [];
+    for (const raw of list) {
+      const a = raw as Partial<Announcement>;
+      const id = typeof a.id === "string" ? a.id.trim() : "";
+      const title = typeof a.title === "string" ? a.title.trim() : "";
+      if (!id || !title) continue;
+      out.push({
+        id,
+        title,
+        body: typeof a.body === "string" ? a.body : "",
+        ...(typeof a.url === "string" && a.url ? { url: a.url } : {}),
+        ...(typeof a.date === "string" && a.date ? { date: a.date } : {}),
+      });
+    }
+    return out;
+  } catch (e) {
+    console.warn(`[github] announcements fetch failed (${url}):`, (e as Error).message);
+    return [];
+  }
+}
