@@ -5,9 +5,11 @@ production, not a sketch. It runs on a free **Oracle Cloud** Ampere/x64 VM
 (Ubuntu 24.04, 1 GB RAM), fronted by **nginx + Let's Encrypt** at a **DuckDNS**
 hostname, under **systemd**.
 
-> **Live deployment (reference values):** hostname `notifier-server`, public IP
-> `129.213.160.55`, served at **`https://wol-notify.duckdns.org/manifest`**,
+> **Live deployment (reference values):** hostname `instance-20260727-0837`,
+> public IP `129.159.70.155`, served at **`https://wol-notify.duckdns.org/manifest`**,
 > systemd unit **`notifier`**. Substitute your own host/IP/token below.
+> *(Rebuilt on a new VM on 2026-08-29; the previous box was `notifier-server` /
+> `129.213.160.55` — that IP is no longer ours.)*
 
 The launcher already defaults to `https://wol-notify.duckdns.org/manifest`
 (`ResolveNotificationFeedUrl()` in the launcher's `MainWindow.xaml.cs`), so a
@@ -232,6 +234,31 @@ The launcher consumes it automatically — confirm in its `launcher-debug.log`
 that the notification sweep uses the feed (no "feed fetch failed").
 
 ---
+
+## Moving to a new VM
+
+A replacement VM starts from **nothing but the repo** — `git clone` + `npm run
+build` leaves the service *not running and unreachable*. Everything else is host
+state, not repo state, so redo steps 3 to 7 in order. What actually bit us on the
+2026-08-29 rebuild:
+
+- **The `notifier.service` unit does not come with the clone** (step 3). Without it
+  `systemctl restart notifier` fails with *"Unit notifier.service not found"* — the
+  usual sign you are on a fresh box, or on the wrong one.
+- **DuckDNS keeps pointing at the OLD IP** until you run `duck.sh` **from the new
+  VM** (step 4). Check with `nslookup wol-notify.duckdns.org` before certbot: a
+  stale record sends the ACME challenge to a machine that is no longer yours.
+- **The Oracle Security List is per-subnet, so a new instance needs its 80/443
+  ingress rules added again** (step 5a), even if you remember doing it once. Subnet
+  → **Security** tab → *Default Security List* → **Add Ingress Rules**. Skipping it
+  fails certbot with *"Timeout during connect (likely firewall problem)"* and burns
+  one of Let's Encrypt's 5 failed validations per hour per hostname.
+- Confirm port 80 is reachable **from outside** (browser on
+  `http://wol-notify.duckdns.org/manifest`, or `Test-NetConnection … -Port 80` in
+  PowerShell — that cmdlet runs on your PC, not on the VM) *before* running certbot.
+
+Until the new VM serves the feed, launchers fall back to polling GitHub directly,
+so a migration is degraded service, never an outage.
 
 ## Operations
 
