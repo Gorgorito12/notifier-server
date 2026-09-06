@@ -5,11 +5,22 @@ production, not a sketch. It runs on a free **Oracle Cloud** Ampere/x64 VM
 (Ubuntu 24.04, 1 GB RAM), fronted by **nginx + Let's Encrypt** at a **DuckDNS**
 hostname, under **systemd**.
 
-> **Live deployment (reference values):** hostname `instance-20260727-0837`,
-> public IP `129.159.70.155`, served at **`https://wol-notify.duckdns.org/manifest`**,
-> systemd unit **`notifier`**. Substitute your own host/IP/token below.
-> *(Rebuilt on a new VM on 2026-08-29; the previous box was `notifier-server` /
-> `129.213.160.55` — that IP is no longer ours.)*
+> **Live deployment.** Reach it as **`wol-notify.duckdns.org`** — for the feed, and for SSH.
+> The systemd unit is **`notifier`**.
+>
+> **Do not use an IP address anywhere in this file as a thing to connect to.** Oracle's public
+> IPs are ephemeral, which is the entire reason `duck.sh` runs from cron every five minutes:
+> the DuckDNS record follows the machine, and a literal address in a document does not. Two
+> boxes have already been through here — `notifier-server` / `129.213.160.55`, then
+> `instance-20260727-0837` / `129.159.70.155` after the 2026-08-29 rebuild — and the first
+> address outlived its usefulness in this file by months.
+>
+> The current instance name and address are worth knowing only to find the box in the Oracle
+> console. Ask DNS rather than trusting this line:
+>
+> ```bash
+> nslookup wol-notify.duckdns.org      # whatever it answers IS the server
+> ```
 
 The launcher already defaults to `https://wol-notify.duckdns.org/manifest`
 (`ResolveNotificationFeedUrl()` in the launcher's `MainWindow.xaml.cs`), so a
@@ -269,7 +280,7 @@ git push origin main
 ### 9.2 On the VM — pull, rebuild, restart
 
 ```bash
-ssh ubuntu@<the VM>            # the IP is in "Live deployment" at the top of this file
+ssh ubuntu@wol-notify.duckdns.org      # by NAME. The IP moves; the name follows it
 cd ~/notifier-server
 
 git rev-parse --short HEAD     # <- WRITE THIS DOWN. It is what you go back to
