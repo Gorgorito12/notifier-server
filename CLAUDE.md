@@ -26,7 +26,7 @@ See `src/catalog.ts`. `mods.config.json` is an optional override only.
 
 **Where it runs:** **DEPLOYED & LIVE** (since 2026-06-18) at
 **`https://wol-notify.duckdns.org/manifest`** on its **own free Oracle Cloud VM**
-(hostname `notifier-server`, public IP `129.213.160.55`, Ubuntu 24.04, 1 GB RAM +
+(hostname `instance-20260727-0837`, public IP `129.159.70.155`, Ubuntu 24.04, 1 GB RAM +
 2 GB swap, Node 20) — deliberately separate from the lobby backend
 (`wol-launcher-lobby-node`, a 1 GB VM capped at ~60 concurrent users). Keeping it
 separate isolates the GitHub-polling load and lets it grow a GitHub token
@@ -38,6 +38,9 @@ gotcha worth remembering: Oracle has **two** firewall layers (the VCN Security L
 in the console AND the local iptables, whose `REJECT ... icmp-host-prohibited` must
 be jumped — the 80/443 ACCEPTs go BEFORE it); and DuckDNS must be updated FROM the
 VM (empty `ip=`) or the domain points at the updater's PC. See `DEPLOY.md`.
+Replacing the VM re-does all of that — the unit, the DNS and the Security List
+are host state, not repo state, so a `git pull` on a fresh box updates nothing
+until steps 3-7 run again (`DEPLOY.md`, "Moving to a new VM").
 
 ## The launcher relationship (read first)
 

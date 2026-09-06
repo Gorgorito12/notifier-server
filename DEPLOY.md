@@ -5,9 +5,11 @@ production, not a sketch. It runs on a free **Oracle Cloud** Ampere/x64 VM
 (Ubuntu 24.04, 1 GB RAM), fronted by **nginx + Let's Encrypt** at a **DuckDNS**
 hostname, under **systemd**.
 
-> **Live deployment (reference values):** hostname `notifier-server`, public IP
-> `129.213.160.55`, served at **`https://wol-notify.duckdns.org/manifest`**,
+> **Live deployment (reference values):** hostname `instance-20260727-0837`,
+> public IP `129.159.70.155`, served at **`https://wol-notify.duckdns.org/manifest`**,
 > systemd unit **`notifier`**. Substitute your own host/IP/token below.
+> *(Rebuilt on a new VM on 2026-08-29; the previous box was `notifier-server` /
+> `129.213.160.55` — that IP is no longer ours.)*
 
 The launcher already defaults to `https://wol-notify.duckdns.org/manifest`
 (`ResolveNotificationFeedUrl()` in the launcher's `MainWindow.xaml.cs`), so a
@@ -246,54 +248,33 @@ that the notification sweep uses the feed (no "feed fetch failed").
 
 ---
 
-## 9. Update a running deployment
+## 9. Deploying a change
 
-Steps 0-8 are the first install. This is what you run afterwards, every time.
+**The one you will run.** Steps 0-8 are the first install; this is every time after that.
 
-There is no CI/CD: nothing pushes to this VM. You SSH in, pull, rebuild, restart. The whole
-thing takes about a minute.
+There is no CI/CD — nothing pushes to this VM. You merge, you SSH in, you pull and rebuild,
+you check. About a minute.
 
-### 9.0 Before you touch the VM
+### 9.1 On your machine — get the change onto `main`
 
-**The change has to be on GitHub, on the branch the VM tracks (`main`).** The VM deploys with
-`git pull`; a commit that only exists on your laptop does not exist for it. A branch that is
-pushed but not merged changes nothing here either.
+The VM deploys with `git pull` on `main`. A commit that lives only on your laptop, or on a
+branch that is pushed but not merged, does not exist for it.
 
 ```bash
-# on your machine
+git checkout main
+git merge <your-branch>
 git push origin main
 ```
 
-### 9.1 Pre-flight, on the VM
+### 9.2 On the VM — pull, rebuild, restart
 
 ```bash
-ssh ubuntu@<the VM>        # see "Live deployment (reference values)" at the top
+ssh ubuntu@<the VM>            # the IP is in "Live deployment" at the top of this file
 cd ~/notifier-server
 
-git branch --show-current      # main
-git status --porcelain         # EMPTY. Anything here is a hand-edit the pull will destroy
-git rev-parse --short HEAD     # <- WRITE THIS DOWN. It is your rollback target
-swapon --show                  # must not be empty
-```
+git rev-parse --short HEAD     # <- WRITE THIS DOWN. It is what you go back to
+git status --porcelain         # must print NOTHING
 
-Two of those are not obvious:
-
-- **A dirty working tree** means somebody patched the running server by hand and never
-  committed it. `git pull` will either clobber it or refuse; either way you want to know
-  before, not during.
-- **Swap** because `tsc` does not fit in 1 GB of RAM. Step 0 makes it survive a reboot via
-  `/etc/fstab`; if it was ever added by hand, a reboot took it away and the build will be
-  OOM-killed halfway through.
-
-Optionally, check the VM still matches what this repo documents:
-
-```bash
-diff deploy/notifier.service /etc/systemd/system/notifier.service   # expect no output
-```
-
-### 9.2 Update
-
-```bash
 git pull --ff-only
 npm ci
 npm run build
@@ -301,83 +282,102 @@ npm test
 sudo systemctl restart notifier
 ```
 
-`--ff-only` on purpose: if the VM has diverged, this **fails loudly** instead of
-manufacturing a merge commit on a machine where nobody will ever look at the result.
+Three of those lines are not ceremony:
 
-`npm ci` deletes `node_modules` and reinstalls, dev dependencies included — this is why the
-swap check matters. The service keeps serving the old build throughout; only the `restart`
-interrupts it.
+- **`git rev-parse` before anything.** It is the only record of what was running, and you
+  want it before you change it, not after.
+- **`git status --porcelain` must be empty.** Output here means somebody patched this server
+  by hand and never committed it; the pull is about to destroy that.
+- **`--ff-only`.** If the VM has diverged this fails loudly instead of building a merge
+  commit on a machine nobody reads.
 
-### 9.3 Verify — three checks, in this order
+If `npm ci` is killed partway, check `swapon --show` is not empty. `tsc` does not fit in 1 GB
+of RAM; step 0 adds swap through `/etc/fstab`, but a swapfile added by hand does not survive
+a reboot.
 
-Each one rules out a different failure. Do not stop at the first.
-
-```bash
-# 1. Did it come back up?
-systemctl is-active notifier                    # active
-
-# 2. Did the first poll finish?
-curl -s localhost:8090/health                   # {"ok":true,"ready":true}
-
-# 3. Did the poll actually bring anything back?
-journalctl -u notifier -n 30 --no-pager | grep '\[poll\]'
-#   [poll] manifest rebuilt: 4 mods, etag="..."
-```
-
-- **`ready:true` is the real signal, not `ok`.** `ok` is a constant. `ready` is
-  `state !== null`, which stays false until the first poll completes — so `ready:false` a
-  few seconds in means the poll is not finishing.
-- **`N mods` with N greater than zero is the one that catches the silent failure.** At N = 0
-  the service is `active`, `/manifest` answers 200, and the manifest is empty: the catalog
-  fetch failed and every launcher quietly gets nothing. Nothing else on this page would show
-  it.
-- **A few seconds of 502 right after the restart is NORMAL.** `main()` awaits the first
-  `poll()` *before* `app.listen`, so the port is closed until the catalog has been walked and
-  nginx has nothing to proxy to. Launchers fall back to polling GitHub directly, so it is not
-  user-visible — but it looks like an outage if you are not expecting it.
-
-Then from outside:
+### 9.3 Did it work?
 
 ```bash
-curl -sI https://wol-notify.duckdns.org/manifest | head -3       # 200 + ETag
-
-curl -s https://wol-notify.duckdns.org/manifest \
-  | python3 -c "import json,sys; print(json.load(sys.stdin)['mods'])"
+./deploy/check.sh
 ```
 
-**No entry should have `latestVersion: ""`.** An empty version is a failed resolve that used
-to be indistinguishable from "no change" — it hashes into the ETag, reaches launchers as the
-mod's version, and raises no alarm anywhere.
+That is the answer. It runs every check below and prints a verdict; **`DEPLOY OK` is the only
+output that means you are finished.** It changes nothing, so it is safe to run whenever.
 
-### 9.4 Rolling back
+It also works from anywhere, against the public URL, which is what you want when you are not
+at the machine:
+
+```bash
+./deploy/check.sh --remote          # or from any box with curl
+```
+
+What it is actually checking, and why each one is there:
+
+| Check | Failing means |
+| --- | --- |
+| `systemctl is-active` | the service did not come back |
+| `/health` → `"ready":true` | it is up but the FIRST POLL never finished. `ok` is a constant; `ready` is the real signal |
+| `[poll] manifest rebuilt: N mods`, N > 0 | **the silent one.** At N = 0 the service is active, `/manifest` answers 200, and the manifest is empty: the catalog fetch failed and every launcher quietly gets nothing |
+| no `latestVersion: ""` | a mod's version failed to resolve. Empty used to be indistinguishable from "no change" |
+| `generatedAt` is recent | the poll loop is running, not just the web server |
+| HTTPS 200 + `ETag` | nginx and the certificate are in front of it |
+
+**A few seconds of 502 right after the restart is normal.** The service awaits its first poll
+*before* it opens the port, so nginx has nothing to proxy to until the catalog has been walked.
+Launchers fall back to GitHub meanwhile, so nobody sees it. Wait and re-run the check.
+
+### 9.4 Going back
 
 ```bash
 cd ~/notifier-server
-git checkout <the-sha-from-9.1>
+git checkout <the sha from 9.2>
 npm ci && npm run build
 sudo systemctl restart notifier
+./deploy/check.sh
 ```
 
-Then run 9.3 again. Two things to know:
-
-- `git checkout <sha>` leaves **HEAD detached**. Before the next update you must
-  `git checkout main`, or `git pull` will not do what you expect.
-- **`.env` does not roll back with the code.** If you changed a variable in the same session,
-  undo that by hand.
+Two things to know: `git checkout <sha>` leaves **HEAD detached**, so before the next deploy
+you must `git checkout main`; and **`.env` does not roll back with the code** — if you changed
+a variable in the same sitting, undo it by hand.
 
 ### 9.5 When it will not start
 
 ```bash
-journalctl -u notifier -n 200 --no-pager          # the error, not just the state
+journalctl -u notifier -n 200 --no-pager           # the error, not just the state
 journalctl -u notifier -p err --since '1 hour ago'
-journalctl -u notifier | grep -i 'oom\|killed'    # MemoryMax=250M kills quietly
+journalctl -u notifier | grep -i 'oom\|killed'     # MemoryMax=250M kills quietly
 ```
 
-`MemoryMax=250M` plus `Restart=on-failure` turns an out-of-memory condition into a restart
-loop that reads as "the service will not come up" — the actual reason only appears if you go
-looking for the OOM. There is no log file: journald is the only place anything is written.
+`MemoryMax=250M` with `Restart=on-failure` turns an out-of-memory into a restart loop that
+reads as "it will not come up"; the real reason only shows if you go looking for the OOM.
+There is no log file — journald is the only place anything is written.
 
 ---
+
+## 10. Moving to a new VM
+
+A replacement VM starts from **nothing but the repo** — `git clone` + `npm run
+build` leaves the service *not running and unreachable*. Everything else is host
+state, not repo state, so redo steps 3 to 7 in order. What actually bit us on the
+2026-08-29 rebuild:
+
+- **The `notifier.service` unit does not come with the clone** (step 3). Without it
+  `systemctl restart notifier` fails with *"Unit notifier.service not found"* — the
+  usual sign you are on a fresh box, or on the wrong one.
+- **DuckDNS keeps pointing at the OLD IP** until you run `duck.sh` **from the new
+  VM** (step 4). Check with `nslookup wol-notify.duckdns.org` before certbot: a
+  stale record sends the ACME challenge to a machine that is no longer yours.
+- **The Oracle Security List is per-subnet, so a new instance needs its 80/443
+  ingress rules added again** (step 5a), even if you remember doing it once. Subnet
+  → **Security** tab → *Default Security List* → **Add Ingress Rules**. Skipping it
+  fails certbot with *"Timeout during connect (likely firewall problem)"* and burns
+  one of Let's Encrypt's 5 failed validations per hour per hostname.
+- Confirm port 80 is reachable **from outside** (browser on
+  `http://wol-notify.duckdns.org/manifest`, or `Test-NetConnection … -Port 80` in
+  PowerShell — that cmdlet runs on your PC, not on the VM) *before* running certbot.
+
+Until the new VM serves the feed, launchers fall back to polling GitHub directly,
+so a migration is degraded service, never an outage.
 
 ## Operations
 
@@ -385,8 +385,10 @@ looking for the OOM. There is no log file: journald is the only place anything i
 | --- | --- |
 | Status / logs | `systemctl status notifier` · `journalctl -u notifier -f` |
 | Restart after `.env` change | `sudo systemctl restart notifier` |
-| Update to latest code | **See [section 9](#9-update-a-running-deployment)** — the pre-flight and the three verification checks are the point; the bare `git pull && npm ci && npm run build && restart` cannot tell you whether it worked |
-| Roll back | [section 9.4](#94-rolling-back) |
+| **Deploy a change** | **[Section 9](#9-deploying-a-change)** — merge to `main`, then pull/rebuild/restart on the VM |
+| **Did the deploy work?** | `./deploy/check.sh` (or `--remote` from anywhere). `DEPLOY OK` is the only output that means yes |
+| Roll back | [section 9.4](#94-going-back) |
+| Move to a new VM | [section 10](#10-moving-to-a-new-vm) |
 | Cert renewal (automatic) | `sudo certbot renew --dry-run` to test |
 | Add a GitHub token later | edit `GITHUB_TOKEN=` in `.env`, then restart |
 
