@@ -16,6 +16,18 @@ export interface TrackedMod {
   updateInfoUrlAlt?: string;
   /** GitHubReleases: "owner/repo" whose latest release tag is the version. */
   githubRepo?: string;
+  /**
+   * GitHubReleases: the catalog's `approvedReleaseTag` - the tag the launcher will
+   * actually load. Required by the catalog schema even with followLatest, because it
+   * seeds a first install and is the fallback when GitHub is unreachable.
+   */
+  approvedReleaseTag?: string;
+  /**
+   * GitHubReleases: the catalog's `update.github.followLatest`. OPT-IN. When it is not
+   * set, the launcher installs `approvedReleaseTag` and nothing else, so announcing any
+   * other tag announces a version it will refuse.
+   */
+  followLatest?: boolean;
   /** Optional "owner/repo" whose RELEASES host translation packs (legacy path). */
   translationsRepo?: string;
   /**

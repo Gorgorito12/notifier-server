@@ -20,3 +20,6 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+      # The suite existed and CI never ran it, so the version path could break in a way
+      # nothing would report - which is the same silent failure the tests are about.
+      - run: npm test

@@ -26,7 +26,7 @@ See `src/catalog.ts`. `mods.config.json` is an optional override only.
 
 **Where it runs:** **DEPLOYED & LIVE** (since 2026-06-18) at
 **`https://wol-notify.duckdns.org/manifest`** on its **own free Oracle Cloud VM**
-(hostname `notifier-server`, public IP `129.213.160.55`, Ubuntu 24.04, 1 GB RAM +
+(hostname `instance-20260727-0837`, public IP `129.159.70.155`, Ubuntu 24.04, 1 GB RAM +
 2 GB swap, Node 20) — deliberately separate from the lobby backend
 (`wol-launcher-lobby-node`, a 1 GB VM capped at ~60 concurrent users). Keeping it
 separate isolates the GitHub-polling load and lets it grow a GitHub token
@@ -38,6 +38,9 @@ gotcha worth remembering: Oracle has **two** firewall layers (the VCN Security L
 in the console AND the local iptables, whose `REJECT ... icmp-host-prohibited` must
 be jumped — the 80/443 ACCEPTs go BEFORE it); and DuckDNS must be updated FROM the
 VM (empty `ip=`) or the domain points at the updater's PC. See `DEPLOY.md`.
+Replacing the VM re-does all of that — the unit, the DNS and the Security List
+are host state, not repo state, so a `git pull` on a fresh box updates nothing
+until steps 3-7 run again (`DEPLOY.md`, "Moving to a new VM").
 
 ## The launcher relationship (read first)
 
@@ -92,7 +95,11 @@ curl -i -H 'If-None-Match: "<etag>"' .../manifest        # 304
 curl -s http://localhost:8090/health                     # {"ok":true,"ready":…}
 ```
 
-`README.md` has the Oracle-VM deploy sketch (reverse proxy + TLS + systemd/pm2).
+`DEPLOY.md` is the deployment runbook: sections 0-8 are the first install, **section 9
+is updating a machine that is already running** (pre-flight, the three verification
+checks, rollback). `README.md` only points at it. It is **systemd**, not pm2 — there is
+no pm2 config in this repo and never was. The unit, the nginx site and the DuckDNS
+script are committed under `deploy/`, so the VM can be diffed against the repo.
 
 ## Architecture
 
@@ -130,8 +137,11 @@ src/index.ts     entry point: in-memory manifest, poll timer, Fastify routes
 ## Important gotchas
 
 - **The ETag hashes CONTENT ONLY — never `generatedAt`.** `computeEtag()` hashes a
-  sorted projection of the `mods` map, deliberately excluding the `generatedAt`
-  timestamp. If `generatedAt` were in the hash, every poll would mint a new ETag
+  sorted projection of the `mods` map **and the `announcements` array**, deliberately
+  excluding the `generatedAt` timestamp. The announcements half is load-bearing and easy
+  to drop by accident: leave them out and an edited or newly published announcement does
+  not move the ETag, so every launcher gets a `304` forever and **no announcement ever
+  arrives** — with the service healthy and the manifest correct the whole time. If `generatedAt` were in the hash, every poll would mint a new ETag
   and **no client would ever get a 304** — defeating the entire point. If you add
   a top-level field that changes every poll, keep it out of the hash too.
 

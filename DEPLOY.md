@@ -5,9 +5,22 @@ production, not a sketch. It runs on a free **Oracle Cloud** Ampere/x64 VM
 (Ubuntu 24.04, 1 GB RAM), fronted by **nginx + Let's Encrypt** at a **DuckDNS**
 hostname, under **systemd**.
 
-> **Live deployment (reference values):** hostname `notifier-server`, public IP
-> `129.213.160.55`, served at **`https://wol-notify.duckdns.org/manifest`**,
-> systemd unit **`notifier`**. Substitute your own host/IP/token below.
+> **Live deployment.** Reach it as **`wol-notify.duckdns.org`** — for the feed, and for SSH.
+> The systemd unit is **`notifier`**.
+>
+> **Do not use an IP address anywhere in this file as a thing to connect to.** Oracle's public
+> IPs are ephemeral, which is the entire reason `duck.sh` runs from cron every five minutes:
+> the DuckDNS record follows the machine, and a literal address in a document does not. Two
+> boxes have already been through here — `notifier-server` / `129.213.160.55`, then
+> `instance-20260727-0837` / `129.159.70.155` after the 2026-08-29 rebuild — and the first
+> address outlived its usefulness in this file by months.
+>
+> The current instance name and address are worth knowing only to find the box in the Oracle
+> console. Ask DNS rather than trusting this line:
+>
+> ```bash
+> nslookup wol-notify.duckdns.org      # whatever it answers IS the server
+> ```
 
 The launcher already defaults to `https://wol-notify.duckdns.org/manifest`
 (`ResolveNotificationFeedUrl()` in the launcher's `MainWindow.xaml.cs`), so a
@@ -77,6 +90,10 @@ kill %1
 
 ## 3. systemd service
 
+The unit is committed at [`deploy/notifier.service`](deploy/notifier.service) and the
+heredoc below is byte-identical to it, so you can paste this or copy the file. Keeping both
+in step is what makes the drift check in step 9.1 work.
+
 ```bash
 sudo tee /etc/systemd/system/notifier.service >/dev/null <<'EOF'
 [Unit]
@@ -113,6 +130,10 @@ config (no `--env-file` needed under systemd).
 Create the subdomain on duckdns.org, then **update it FROM the VM** so it
 resolves to the VM's public egress IP. The `ip=` field is left **empty on
 purpose** — DuckDNS then uses the requester's IP (the VM):
+
+The script is committed at [`deploy/duck.sh`](deploy/duck.sh) (with `YOUR_TOKEN` as a
+placeholder — **the real token is not in this repo**). Copy it instead of retyping, or use
+the one-liner below:
 
 ```bash
 mkdir -p ~/duckdns && cd ~/duckdns
@@ -175,6 +196,11 @@ Test-NetConnection -ComputerName wol-notify.duckdns.org -Port 80   # TcpTestSucc
 
 ## 6. nginx reverse proxy
 
+This site file is committed at
+[`deploy/nginx-notifier.conf`](deploy/nginx-notifier.conf) — the **pre-TLS** version. Step 7
+lets certbot rewrite the live file for 443, so after that the two legitimately differ; the
+part worth comparing is the `location /` block.
+
 ```bash
 sudo apt install -y nginx certbot python3-certbot-nginx
 
@@ -233,13 +259,147 @@ that the notification sweep uses the feed (no "feed fetch failed").
 
 ---
 
+## 9. Deploying a change
+
+**The one you will run.** Steps 0-8 are the first install; this is every time after that.
+
+There is no CI/CD — nothing pushes to this VM. You merge, you SSH in, you pull and rebuild,
+you check. About a minute.
+
+### 9.1 On your machine — get the change onto `main`
+
+The VM deploys with `git pull` on `main`. A commit that lives only on your laptop, or on a
+branch that is pushed but not merged, does not exist for it.
+
+```bash
+git checkout main
+git merge <your-branch>
+git push origin main
+```
+
+### 9.2 On the VM — pull, rebuild, restart
+
+```bash
+ssh ubuntu@wol-notify.duckdns.org      # by NAME. The IP moves; the name follows it
+cd ~/notifier-server
+
+git rev-parse --short HEAD     # <- WRITE THIS DOWN. It is what you go back to
+git status --porcelain         # must print NOTHING
+
+git pull --ff-only
+npm ci
+npm run build
+npm test
+sudo systemctl restart notifier
+```
+
+Three of those lines are not ceremony:
+
+- **`git rev-parse` before anything.** It is the only record of what was running, and you
+  want it before you change it, not after.
+- **`git status --porcelain` must be empty.** Output here means somebody patched this server
+  by hand and never committed it; the pull is about to destroy that.
+- **`--ff-only`.** If the VM has diverged this fails loudly instead of building a merge
+  commit on a machine nobody reads.
+
+If `npm ci` is killed partway, check `swapon --show` is not empty. `tsc` does not fit in 1 GB
+of RAM; step 0 adds swap through `/etc/fstab`, but a swapfile added by hand does not survive
+a reboot.
+
+### 9.3 Did it work?
+
+```bash
+./deploy/check.sh
+```
+
+That is the answer. It runs every check below and prints a verdict; **`DEPLOY OK` is the only
+output that means you are finished.** It changes nothing, so it is safe to run whenever.
+
+It also works from anywhere, against the public URL, which is what you want when you are not
+at the machine:
+
+```bash
+./deploy/check.sh --remote          # or from any box with curl
+```
+
+What it is actually checking, and why each one is there:
+
+| Check | Failing means |
+| --- | --- |
+| `systemctl is-active` | the service did not come back |
+| `/health` → `"ready":true` | it is up but the FIRST POLL never finished. `ok` is a constant; `ready` is the real signal |
+| `[poll] manifest rebuilt: N mods`, N > 0 | **the silent one.** At N = 0 the service is active, `/manifest` answers 200, and the manifest is empty: the catalog fetch failed and every launcher quietly gets nothing |
+| no `latestVersion: ""` | a mod's version failed to resolve. Empty used to be indistinguishable from "no change" |
+| `generatedAt` is recent | the poll loop is running, not just the web server |
+| HTTPS 200 + `ETag` | nginx and the certificate are in front of it |
+
+**A few seconds of 502 right after the restart is normal.** The service awaits its first poll
+*before* it opens the port, so nginx has nothing to proxy to until the catalog has been walked.
+Launchers fall back to GitHub meanwhile, so nobody sees it. Wait and re-run the check.
+
+### 9.4 Going back
+
+```bash
+cd ~/notifier-server
+git checkout <the sha from 9.2>
+npm ci && npm run build
+sudo systemctl restart notifier
+./deploy/check.sh
+```
+
+Two things to know: `git checkout <sha>` leaves **HEAD detached**, so before the next deploy
+you must `git checkout main`; and **`.env` does not roll back with the code** — if you changed
+a variable in the same sitting, undo it by hand.
+
+### 9.5 When it will not start
+
+```bash
+journalctl -u notifier -n 200 --no-pager           # the error, not just the state
+journalctl -u notifier -p err --since '1 hour ago'
+journalctl -u notifier | grep -i 'oom\|killed'     # MemoryMax=250M kills quietly
+```
+
+`MemoryMax=250M` with `Restart=on-failure` turns an out-of-memory into a restart loop that
+reads as "it will not come up"; the real reason only shows if you go looking for the OOM.
+There is no log file — journald is the only place anything is written.
+
+---
+
+## 10. Moving to a new VM
+
+A replacement VM starts from **nothing but the repo** — `git clone` + `npm run
+build` leaves the service *not running and unreachable*. Everything else is host
+state, not repo state, so redo steps 3 to 7 in order. What actually bit us on the
+2026-08-29 rebuild:
+
+- **The `notifier.service` unit does not come with the clone** (step 3). Without it
+  `systemctl restart notifier` fails with *"Unit notifier.service not found"* — the
+  usual sign you are on a fresh box, or on the wrong one.
+- **DuckDNS keeps pointing at the OLD IP** until you run `duck.sh` **from the new
+  VM** (step 4). Check with `nslookup wol-notify.duckdns.org` before certbot: a
+  stale record sends the ACME challenge to a machine that is no longer yours.
+- **The Oracle Security List is per-subnet, so a new instance needs its 80/443
+  ingress rules added again** (step 5a), even if you remember doing it once. Subnet
+  → **Security** tab → *Default Security List* → **Add Ingress Rules**. Skipping it
+  fails certbot with *"Timeout during connect (likely firewall problem)"* and burns
+  one of Let's Encrypt's 5 failed validations per hour per hostname.
+- Confirm port 80 is reachable **from outside** (browser on
+  `http://wol-notify.duckdns.org/manifest`, or `Test-NetConnection … -Port 80` in
+  PowerShell — that cmdlet runs on your PC, not on the VM) *before* running certbot.
+
+Until the new VM serves the feed, launchers fall back to polling GitHub directly,
+so a migration is degraded service, never an outage.
+
 ## Operations
 
 | Action | Command |
 | --- | --- |
 | Status / logs | `systemctl status notifier` · `journalctl -u notifier -f` |
 | Restart after `.env` change | `sudo systemctl restart notifier` |
-| Update to latest code | `cd ~/notifier-server && git pull && npm ci && npm run build && sudo systemctl restart notifier` |
+| **Deploy a change** | **[Section 9](#9-deploying-a-change)** — merge to `main`, then pull/rebuild/restart on the VM |
+| **Did the deploy work?** | `./deploy/check.sh` (or `--remote` from anywhere). `DEPLOY OK` is the only output that means yes |
+| Roll back | [section 9.4](#94-going-back) |
+| Move to a new VM | [section 10](#10-moving-to-a-new-vm) |
 | Cert renewal (automatic) | `sudo certbot renew --dry-run` to test |
 | Add a GitHub token later | edit `GITHUB_TOKEN=` in `.env`, then restart |
 

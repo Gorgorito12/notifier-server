@@ -29,7 +29,11 @@ export interface ManifestState {
  * generatedAt — so an unchanged poll keeps the same ETag and launchers get a
  * cheap 304. Throttle is the caller's POLL_INTERVAL.
  */
-export async function buildManifest(config: AppConfig, nowIso: string): Promise<ManifestState> {
+export async function buildManifest(
+  config: AppConfig,
+  nowIso: string,
+  previous?: Manifest["mods"],
+): Promise<ManifestState> {
   // PRIMARY source: every mod discovered from the catalog. Manual overrides (if
   // any) are merged ON TOP by id, so an entry in mods.config.json supplements a
   // mod missing from the catalog or forces a different URL.
@@ -41,7 +45,23 @@ export async function buildManifest(config: AppConfig, nowIso: string): Promise<
   // from this single IP.
   for (const mod of tracked) {
     if (!mod.id) continue;
-    const latestVersion = await resolveLatestVersion(mod, config.githubToken);
+    const resolved = await resolveLatestVersion(mod, config.githubToken);
+
+    // An empty answer is a FAILURE, not a version. Publishing it would blank the mod's
+    // entry for every launcher on the next poll, and "" is a legitimate map value that
+    // hashes into the ETag and raises no alarm anywhere -- exactly the silent, permanent
+    // breakage the announcement tests were written to prevent. Keep what we last knew.
+    const carried = previous?.[mod.id]?.latestVersion ?? "";
+    let latestVersion = resolved;
+    if (!resolved) {
+      latestVersion = carried;
+      if (carried) {
+        console.error(`[manifest] ${mod.id}: no version resolved; keeping ${carried}`);
+      } else {
+        console.error(`[manifest] ${mod.id}: no version resolved and nothing cached`);
+      }
+    }
+
     // Dual mode: folder-published (translations/<id>/ on main) + legacy releases.
     const translations = await resolveAllTranslationKeys(mod, config.githubToken);
     mods[mod.id] = { latestVersion, translations };

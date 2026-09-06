@@ -1,0 +1,17 @@
+[Unit]
+Description=AoE3 Mod Launcher Notifier Feed
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/notifier-server
+EnvironmentFile=/home/ubuntu/notifier-server/.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=on-failure
+RestartSec=5
+MemoryMax=250M
+
+[Install]
+WantedBy=multi-user.target
