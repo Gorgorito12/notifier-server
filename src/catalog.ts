@@ -18,9 +18,13 @@ import type { TrackedMod } from "./config.js";
 interface CatalogModJson {
   id?: string;
   sourceRepo?: string;
+  /** The tag the launcher will actually load. See mod.schema.json. */
+  approvedReleaseTag?: string;
   update?: {
     mechanism?: string;
     wol?: { updateInfoUrl?: string; updateInfoUrlAlt?: string };
+    /** followLatest is OPT-IN, so its absence is meaningful and must survive parsing. */
+    github?: { followLatest?: boolean };
   };
   translations?: { repo?: string; folderRepo?: string };
 }
@@ -98,11 +102,19 @@ function projectToTracked(m: CatalogModJson, folder: string): TrackedMod | null 
   let updateInfoUrl: string | undefined;
   let updateInfoUrlAlt: string | undefined;
   let githubRepo: string | undefined;
+  let approvedReleaseTag: string | undefined;
+  let followLatest: boolean | undefined;
   if (mechanism === "WolPatcher") {
     updateInfoUrl = m.update?.wol?.updateInfoUrl || undefined;
     updateInfoUrlAlt = m.update?.wol?.updateInfoUrlAlt || undefined;
   } else if (mechanism === "GitHubReleases") {
     githubRepo = m.sourceRepo || undefined;
+    // Both were being dropped here, which made every GitHubReleases mod behave as if it
+    // had opted into followLatest. It happens to match intent for today's catalog -- all
+    // three set it -- but the first mod to leave it off would have been told about a
+    // release the launcher refuses to install.
+    approvedReleaseTag = m.approvedReleaseTag || undefined;
+    followLatest = m.update?.github?.followLatest === true;
   }
 
   // Nothing to report: no version source and no translations → skip (e.g. a
@@ -118,6 +130,8 @@ function projectToTracked(m: CatalogModJson, folder: string): TrackedMod | null 
     updateInfoUrl,
     updateInfoUrlAlt,
     githubRepo,
+    approvedReleaseTag,
+    followLatest,
     translationsRepo,
     translationsFolderRepo,
   };

@@ -25,7 +25,14 @@ function ghHeaders(token: string): Record<string, string> {
  */
 const UPDATE_INFO_UA = "WarsOfLibertyLauncher/0.3";
 
-/** Resolves the latest available version string for a tracked mod, or "" on failure. */
+/**
+ * Resolves the version this launcher would actually be told about, or "" when there is no
+ * answer.
+ *
+ * An empty string means FAILURE or "no version source", never "no change". The caller keeps
+ * the previous poll's value rather than publishing it, because a blank version reaching a
+ * launcher is indistinguishable from a mod that never shipped anything.
+ */
 export async function resolveLatestVersion(mod: TrackedMod, token: string): Promise<string> {
   try {
     if (mod.updateMechanism === "WolPatcher") {
@@ -50,17 +57,31 @@ export async function resolveLatestVersion(mod: TrackedMod, token: string): Prom
     }
 
     if (mod.updateMechanism === "GitHubReleases") {
-      if (!mod.githubRepo) return "";
-      const url = `https://api.github.com/repos/${mod.githubRepo}/releases?per_page=10`;
+      // followLatest is OPT-IN in the catalog. Without it the launcher installs the
+      // approved tag and nothing else, so that tag is the only honest thing to announce.
+      if (!mod.followLatest) return mod.approvedReleaseTag ?? "";
+
+      if (!mod.githubRepo) return mod.approvedReleaseTag ?? "";
+
+      // /releases/latest, the SAME endpoint the launcher's followLatest path uses. GitHub
+      // excludes drafts and prereleases from it. The old code paged /releases and took the
+      // first non-draft, which accepts prereleases -- so this service could announce a
+      // version the launcher would never resolve.
+      const url = `https://api.github.com/repos/${mod.githubRepo}/releases/latest`;
       const res = await fetch(url, { headers: ghHeaders(token) });
       if (!res.ok) {
-        console.warn(`[github] ${mod.id}: releases HTTP ${res.status}`);
-        return "";
+        // A repo with no published non-prerelease yet answers 404, which is a real state
+        // and not a fault; anything else is worth shouting about, because a silent "" here
+        // is how a permanently broken mod version would go unnoticed.
+        if (res.status === 404) {
+          console.warn(`[github] ${mod.id}: no published release; using approved tag`);
+        } else {
+          console.error(`[github] ${mod.id}: releases/latest HTTP ${res.status}`);
+        }
+        return mod.approvedReleaseTag ?? "";
       }
-      const releases = (await res.json()) as Array<{ tag_name?: string; draft?: boolean; prerelease?: boolean }>;
-      // First non-draft release; GitHub returns newest first.
-      const latest = releases.find((r) => !r.draft);
-      return latest?.tag_name ?? "";
+      const latest = (await res.json()) as { tag_name?: string };
+      return latest?.tag_name?.trim() || (mod.approvedReleaseTag ?? "");
     }
   } catch (err) {
     console.warn(`[github] ${mod.id}: version resolve failed:`, (err as Error).message);

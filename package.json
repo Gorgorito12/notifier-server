@@ -13,7 +13,7 @@
     "start": "node dist/index.js",
     "dev": "node --import tsx --watch src/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/manifest.test.ts"
+    "test": "tsx --test src/*.test.ts"
   },
   "dependencies": {
     "fastify": "^4.28.1"

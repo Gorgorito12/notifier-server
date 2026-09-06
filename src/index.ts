@@ -16,7 +16,9 @@ let state: ManifestState | null = null;
 async function poll(): Promise<void> {
   try {
     const nowIso = new Date().toISOString();
-    state = await buildManifest(config, nowIso);
+    // The previous mods map goes in so a transient failure - a 403 on the anonymous quota,
+    // say - carries the last known version forward instead of blanking it.
+    state = await buildManifest(config, nowIso, state?.manifest.mods);
     const count = Object.keys(state.manifest.mods).length;
     console.log(`[poll] manifest rebuilt: ${count} mods, etag=${state.etag}`);
   } catch (err) {
