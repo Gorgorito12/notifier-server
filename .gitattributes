@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Shell scripts run on the Linux VM. A CRLF here makes bash fail with an error
+# that never mentions line endings, so pin it rather than trusting text=auto.
+deploy/*.sh text eol=lf
