@@ -267,7 +267,7 @@ git push origin main
 ### 9.1 Pre-flight, on the VM
 
 ```bash
-ssh ubuntu@129.213.160.55
+ssh ubuntu@<the VM>        # see "Live deployment (reference values)" at the top
 cd ~/notifier-server
 
 git branch --show-current      # main
